@@ -1,14 +1,12 @@
 use gtk::{Application, gdk, glib, prelude::*};
 
-use crate::{config, window::LockWindow};
+use crate::{config, widgets::window::LockWindow};
 
 #[derive(Clone, glib::Downgrade, Debug, Default)]
 pub struct Lock(gtk_session_lock::Instance);
 
 impl Lock {
     fn locked(app: &Application, parent: Option<i32>) {
-        println!("Session locked successfully");
-
         glib::unix_signal_add_local(
             libc::SIGUSR1,
             glib::clone!(
@@ -21,24 +19,16 @@ impl Lock {
             ),
         );
 
+        // If we are want to daemonize, we shall send signal (SIGUSR2)
+        // to notify that we are successfully locked screen.
         if let Some(parent) = parent {
             unsafe { libc::kill(parent, libc::SIGUSR2) };
         }
-
-        // glib::timeout_add_local(
-        //     std::time::Duration::from_secs(2),
-        //     move || {
-        //         unsafe { libc::raise(libc::SIGUSR1) };
-        //         glib::ControlFlow::Break
-        //     });
     }
 
-    fn failed(_: &gtk_session_lock::Instance) {
-        eprintln!("The session could not be locked");
-    }
+    fn failed(_: &gtk_session_lock::Instance) { }
 
     fn unlocked(app: &gtk::Application) {
-        println!("Session unlocked");
         app.quit();
     }
 
@@ -48,10 +38,24 @@ impl Lock {
         app: &Application,
         config: &config::Config,
     ) {
-        // This function will be called once for each monitor (aka output) present when the session becomes locked, and also
+        // This function will be called once for each monitor (aka output)
+        // present when the session becomes locked, and also
         // whenever a new monitor is plugged in while the session is locked.
+        let w = LockWindow::builder()
+            .application(app)
+            .lock(lock)
+            .start_hidden(config.get_start_hidden())
+            .idle_timeout(config.get_idle_timeout())
+            .time_format(config.get_time_format())
+            .date_format(config.get_date_format());
 
-        lock.assign_window_to_monitor(&LockWindow::new(app, lock, config), monitor);
+        let w = if let Some(bg) = config.get_background() {
+            w.background(bg).build()
+        } else {
+            w.build()
+        };
+
+        lock.assign_window_to_monitor(&w, monitor);
         // DONT call present, gtk_session_lock_instance_assign_window_to_monitor() does that for us
     }
 
@@ -59,19 +63,19 @@ impl Lock {
         let lock = gtk_session_lock::Instance::new();
 
         lock.connect_locked(glib::clone!(
-            #[strong]
+            #[weak]
             app,
             move |_| Self::locked(&app, parent)
         ));
         lock.connect_failed(Self::failed);
         lock.connect_unlocked(glib::clone!(
-            #[strong]
+            #[weak]
             app,
             move |_| Self::unlocked(&app)
         ));
 
         lock.connect_monitor(glib::clone!(
-            #[strong]
+            #[weak]
             app,
             #[strong]
             config,
@@ -87,15 +91,5 @@ impl Lock {
 
     pub fn unlock(&self) {
         self.0.unlock();
-    }
-
-    // pub fn available() -> bool {
-    //     gtk_session_lock::is_supported()
-    // }
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        self.unlock();
     }
 }

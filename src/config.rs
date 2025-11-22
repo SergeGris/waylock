@@ -1,37 +1,3 @@
-// #[derive(Debug, Default, Deserialize)]
-// pub struct Config {
-//     #[serde(default)]
-//     pub general: GeneralConfig,
-
-//     #[serde(default)]
-//     pub debug: DebugConfig,
-// }
-
-// #[derive(Debug, Default, Deserialize)]
-// pub struct GeneralConfig {
-//     #[serde(default = "default_timeout")]
-//     pub timeout: u32,
-
-//     #[serde(default)]
-//     pub theme: Option<String>,
-
-//     #[serde(default)]
-//     pub lock_command: Option<String>,
-// }
-
-// #[derive(Debug, Default, Deserialize)]
-// pub struct DebugConfig {
-//     #[serde(default)]
-//     pub verbose: bool,
-
-//     #[serde(default)]
-//     pub style_dump: bool,
-// }
-
-// fn default_timeout() -> u32 {
-//     30
-// }
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -42,6 +8,7 @@ use thiserror::Error;
 
 #[derive(clap::Parser, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    /// Set GTK theme
     #[arg(long, short = 'g')]
     #[serde(default)]
     gtk_theme: Option<String>,
@@ -51,10 +18,12 @@ pub struct Config {
     #[serde(default = "default::config")]
     config: Option<PathBuf>,
 
+    // Path to CSS style file
     #[arg(long, short = 'S')]
     #[serde(default = "default::style")]
     style: Option<PathBuf>,
 
+    // Path to background
     #[arg(long, short = 'b')]
     #[serde(default)]
     background: Option<PathBuf>,
@@ -118,10 +87,7 @@ impl Config {
     }
 
     pub fn get_style(&self) -> Option<PathBuf> {
-        self.style
-            .as_ref()
-            .map(std::clone::Clone::clone)
-            .or_else(default::style)
+        self.style.clone().or_else(default::style)
     }
 
     pub const fn get_background(&self) -> Option<&PathBuf> {
@@ -129,10 +95,7 @@ impl Config {
     }
 
     pub fn get_config(&self) -> Option<PathBuf> {
-        self.config
-            .as_ref()
-            .map(|p| p.clone())
-            .or_else(default::config)
+        self.config.clone().or_else(default::config)
     }
 
     pub fn get_idle_timeout(&self) -> u64 {
@@ -156,10 +119,10 @@ impl Config {
     }
 }
 
-mod default {
+pub mod default {
     pub const TIME_FORMAT: &str = "%H:%M";
     pub const DATE_FORMAT: &str = "%A, %d %B %Y";
-    pub const START_HIDDEN: bool = true;
+    pub const START_HIDDEN: bool = false;
     pub const IDLE_TIMEOUT: u64 = 30;
 
     use std::path::PathBuf;
@@ -177,7 +140,7 @@ mod default {
     }
 
     pub const fn start_hidden() -> Option<bool> {
-        Some(true)
+        Some(START_HIDDEN)
     }
 
     pub fn time_format() -> Option<String> {
@@ -198,10 +161,11 @@ pub enum ConfigError {
     Toml(#[from] toml::de::Error),
 }
 
-pub fn default_config() -> String {
-    let c = Config::default();
-    toml::to_string(&c).unwrap_or_default()
-}
+// TODO
+// pub fn default_config() -> String {
+//     let c = Config::default();
+//     toml::to_string(&c).unwrap_or_default()
+// }
 
 fn raw_load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
     Ok(toml::from_str(&fs::read_to_string(path)?)?)

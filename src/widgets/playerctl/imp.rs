@@ -1,8 +1,7 @@
-use gtk::glib;
-use gtk::prelude::*;
-use gtk::{Box, Button, Label, Orientation};
-use mpris::{DBusError, Player, PlayerFinder};
 use std::{cell::RefCell, rc::Rc};
+
+use gtk::{Box, Button, Label, Orientation, glib, prelude::*};
+use mpris::{DBusError, Player, PlayerFinder};
 
 pub struct PlayerControls {
     // container: Box,
@@ -40,6 +39,7 @@ impl PlayerButton {
 impl PlayerControls {
     pub fn new() -> gtk::Widget {
         let finder = PlayerFinder::new();
+
         if let Err(e) = finder {
             return gtk::Label::new(Some(&format!("{e}"))).into();
         }

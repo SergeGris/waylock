@@ -1,41 +1,38 @@
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
-#![warn(clippy::nursery)]
-#![warn(clippy::cargo)]
-// #![warn(clippy::restriction)]   // WARNING: extremely strict; see notes below
 
-// use clap::Parser;
 use clap::Parser;
 use gtk::{Application, glib, prelude::*};
 
 mod args;
-mod clock;
 mod config;
 mod css;
 mod lock;
 mod pam;
-mod password_entry;
-#[cfg(feature = "playerctl")]
-mod playerctl;
-mod powerbar;
-#[cfg(feature = "userinfo")]
-mod user;
-mod window;
+mod widgets;
 
-// const APP_ID: &str = ""; // TODO HUI
+use widgets::*;
 
+#[must_use]
 pub fn daemonize() -> i32 {
     use std::process::exit;
 
     use libc::{
-        SIG_BLOCK, SIGUSR2, WEXITSTATUS, WIFEXITED, fork, setsid, sigaddset, sigemptyset,
-        sigprocmask, sigtimedwait, timespec, waitpid,
+        SIG_BLOCK,
+        SIGUSR2,
+        WEXITSTATUS,
+        WIFEXITED,
+        fork,
+        setsid,
+        sigaddset,
+        sigemptyset,
+        sigprocmask,
+        sigtimedwait,
+        timespec,
+        waitpid,
     };
 
     let parent = unsafe { libc::getpid() };
 
     unsafe {
-        // --- FIRST FORK ---
         let pid = fork();
         if pid < 0 {
             eprintln!("Failed to daemonize");
@@ -83,14 +80,6 @@ pub fn daemonize() -> i32 {
             exit(0);
         }
 
-        // --- GRANDCHILD (ACTUAL DAEMON) ---
-        // At this point you should:
-        //   • change working directory
-        //   • redirect stdio
-        //   • reset umask
-        //   • send SIGUSR2 to parent if needed
-
-        // Example: signal parent daemon is ready
         libc::kill(libc::getppid(), SIGUSR2);
     }
 
@@ -98,20 +87,6 @@ pub fn daemonize() -> i32 {
 }
 
 fn main() -> glib::ExitCode {
-    std::panic::set_hook(Box::new(|info| {
-        let msg = if let Some(msg) = info.payload().downcast_ref::<String>() {
-            msg.clone()
-        } else if let Some(msg) = info.payload().downcast_ref::<&str>() {
-            msg.to_string()
-        } else {
-            "unknown panic".into()
-        };
-
-        eprintln!("panic: {msg}");
-        // std::panic::resume_unwind(err);
-        //Err(anyhow::Error::msg(msg))
-    }));
-
     let mut args = args::Args::parse();
 
     let parent = if args.daemonize {
@@ -124,29 +99,27 @@ fn main() -> glib::ExitCode {
         args.config = config::load_config(path).merge(args.config);
     }
 
-    println!("{}", config::default_config());
-
     // TODO
+    // For many reasons we shall initialize gtk manually and earlier.
     gtk::init().unwrap();
+
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_theme_name(args.config.get_gtk_theme().map(String::as_str));
+    }
 
     let app = Application::builder()
         .flags(gtk::gio::ApplicationFlags::FLAGS_NONE)
-        //.application_id("com.example.LockWindow")
         .build();
-
-    // if let Some(name) = args.name {
-    //     glib::set_application_name("Waylock");
-    // }
 
     let lock = lock::Lock::new(&app, parent, &args.config);
 
     app.connect_activate(glib::clone!(
-        #[strong]
+        #[weak]
         lock,
-        move |app| activate(app, &lock, &args)
+        move |_| activate(&lock, &args)
     ));
     app.connect_shutdown(glib::clone!(
-        #[strong]
+        #[weak]
         lock,
         move |_| shutdown(&lock)
     ));
@@ -163,52 +136,36 @@ fn main() -> glib::ExitCode {
         ),
     );
 
-    // app.run()
-    app.run_with_args::<glib::GString>(&[]) // TODO??   app.run()
+    app.run_with_args::<glib::GString>(&[])
 }
 
-fn activate(_app: &Application, lock: &lock::Lock, args: &args::Args) {
-    println!("Activate");
-
-    if let Some(path) = args.config.get_background()
-        && let Ok(ref uri) =
-            url::Url::from_file_path(path.canonicalize().unwrap_or_else(|_| path.clone()))
-    {
-        let s = uri.as_str();
-
-        attach_style!(
-            r#"
-.background {{
-    background-image: url("{s}");
-    background-size: cover;
-}}"#
-        );
-    } else {
-        attach_style!(
-            r"
-.background {{
-    background-image: linear-gradient(to bottom right, #00004B, #4B0000);
-}}"
-        );
-    }
+fn activate(lock: &lock::Lock, args: &args::Args) {
+    // Get default transition duration
+    let revealer = gtk::Revealer::new();
+    let duration = revealer.transition_duration();
+    drop(revealer);
 
     attach_style!(
         r"
-.window #clock-label {{
-    font-size: 80pt;
+#window .clock-label {{
+    transition: {duration}ms ease-in-out;
+    font-size: 64pt;
     font-family: monospace;
 }}
-.window.focused:not(.hidden) #clock-label {{
-    font-size: 32pt;
+#window.focused:not(.hidden) .clock-label {{
+    font-size: 48pt;
+}}
+#window .date-label {{
+    transition: {duration}ms ease-in-out;
+    font-size: 16pt;
     font-family: monospace;
 }}
-.window #date-label {{
-    font-size: 28px;
-}}
-.window.focused:not(.hidden) #date-label {{
+#window.focused:not(.hidden) .date-label {{
     font-size: 12pt;
+    font-family: monospace;
 }}
-.error-label {{
+
+#error-label {{
     color: red;
 }}
 "
@@ -222,6 +179,5 @@ fn activate(_app: &Application, lock: &lock::Lock, args: &args::Args) {
 }
 
 fn shutdown(lock: &lock::Lock) {
-    println!("Shutdown");
     lock.unlock();
 }

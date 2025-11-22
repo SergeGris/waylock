@@ -1,8 +1,7 @@
-use nonstick::{AuthnFlags, ConversationAdapter, Result, Transaction, TransactionBuilder};
 use std::ffi::{OsStr, OsString};
 
-/// A simple non-interactive PAM conversation handler.
-/// PAM can prompt for input; this struct supplies fixed responses.
+use nonstick::{AuthnFlags, ConversationAdapter, Result, Transaction, TransactionBuilder};
+
 struct StaticConversation {
     username: String,
     password: String,
@@ -26,7 +25,6 @@ impl ConversationAdapter for StaticConversation {
 pub fn authenticate(username: String, password: String) -> Result<()> {
     let service = "waylock";
 
-    // Build a fixed conversation adapter
     let convo = StaticConversation {
         username: username.clone(),
         password,
