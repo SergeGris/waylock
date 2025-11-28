@@ -4,7 +4,8 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+
+use crate::log;
 
 #[derive(clap::Parser, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -34,7 +35,7 @@ pub struct Config {
     idle_timeout: Option<u64>,
 
     /// Start with hidden form
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue)] //, value_parser = clap::builder::BoolishValueParser::new())]
     #[serde(default)]
     start_hidden: Option<bool>,
 
@@ -87,15 +88,21 @@ impl Config {
     }
 
     pub fn get_style(&self) -> Option<PathBuf> {
-        self.style.clone().or_else(default::style)
+        self.style
+            .as_ref()
+            .map(std::clone::Clone::clone)
+            .or_else(default::style)
     }
 
-    pub const fn get_background(&self) -> Option<&PathBuf> {
-        self.background.as_ref()
+    pub fn get_background(&self) -> Option<&Path> {
+        self.background.as_deref()
     }
 
     pub fn get_config(&self) -> Option<PathBuf> {
-        self.config.clone().or_else(default::config)
+        self.config
+            .as_ref()
+            .map(std::clone::Clone::clone)
+            .or_else(default::config)
     }
 
     pub fn get_idle_timeout(&self) -> u64 {
@@ -109,13 +116,15 @@ impl Config {
     pub fn get_time_format(&self) -> &str {
         self.time_format
             .as_ref()
-            .map_or(default::TIME_FORMAT, String::as_str)
+            .map(String::as_str)
+            .unwrap_or(default::TIME_FORMAT)
     }
 
     pub fn get_date_format(&self) -> &str {
         self.date_format
             .as_ref()
-            .map_or(default::DATE_FORMAT, String::as_str)
+            .map(String::as_str)
+            .unwrap_or(default::DATE_FORMAT)
     }
 }
 
@@ -152,8 +161,8 @@ pub mod default {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum ConfigError {
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
     #[error("failed to read config file: {0}")]
     Io(#[from] std::io::Error),
 
@@ -167,15 +176,18 @@ pub enum ConfigError {
 //     toml::to_string(&c).unwrap_or_default()
 // }
 
-fn raw_load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
+fn raw_load_config(path: impl AsRef<Path>) -> Result<Config, Error> {
     Ok(toml::from_str(&fs::read_to_string(path)?)?)
 }
 
 pub fn load_config(path: impl AsRef<Path>) -> Config {
-    match raw_load_config(path) {
-        Ok(c) => c,
+    match raw_load_config(&path) {
+        Ok(c) => {
+            log::info!("config loaded: {:?}", path.as_ref());
+            c
+        }
         Err(e) => {
-            eprintln!("Warning: failed load config: {e}");
+            log::info!("failed load config: {e}");
             Config::default()
         }
     }

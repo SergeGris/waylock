@@ -2,6 +2,8 @@ use std::{ffi::OsString, time::Duration};
 
 use gtk::{Box, Button, Orientation, glib, prelude::*, subclass::prelude::*};
 
+use crate::log;
+
 enum PowerOption {
     Shutdown,
     Reboot,
@@ -13,7 +15,7 @@ enum PowerOption {
 const BUTTON_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl PowerOption {
-    const fn get_icon(&self) -> &'static str {
+    const fn get_icon(&self) -> &str {
         match self {
             Self::Shutdown => "system-shutdown-symbolic",
             Self::Reboot => "system-reboot-symbolic",
@@ -24,6 +26,7 @@ impl PowerOption {
     }
 
     fn get_default_command(&self) -> Option<OsString> {
+        return Some("ls".into());
         match self {
             Self::Shutdown => Some("systemctl -i poweroff".into()),
             Self::Reboot => Some("systemctl reboot".into()),
@@ -34,7 +37,7 @@ impl PowerOption {
     }
 }
 
-fn button_clicked(button: &Button, _p: &PowerOption, cmdline: &OsString) {
+fn button_clicked(button: &Button, cmdline: &OsString) {
     if BUTTON_TIMEOUT > Duration::ZERO {
         button.set_sensitive(false);
 
@@ -47,7 +50,9 @@ fn button_clicked(button: &Button, _p: &PowerOption, cmdline: &OsString) {
         });
     }
 
-    glib::spawn_command_line_async(cmdline).unwrap();
+    if let Err(err) = glib::spawn_command_line_async(cmdline) {
+        log::warning!("Failed to run app ${cmdline:?} {err}");
+    }
 }
 
 #[derive(Default)]
@@ -55,7 +60,7 @@ pub struct PowerBar;
 
 #[glib::object_subclass]
 impl ObjectSubclass for PowerBar {
-    const NAME: &'static str = "PowerBar";
+    const NAME: &str = "PowerBar";
     type Type = super::PowerBar;
     type ParentType = Box;
 }
@@ -81,7 +86,7 @@ impl ObjectImpl for PowerBar {
                 button.connect_clicked(glib::clone!(
                     #[weak]
                     button,
-                    move |_| button_clicked(&button, &n, &cmdline)
+                    move |_| button_clicked(&button, &cmdline)
                 ));
                 obj.append(&button);
             }

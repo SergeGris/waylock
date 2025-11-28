@@ -1,21 +1,18 @@
 use gtk::{Application, gdk, glib, prelude::*};
 
-use crate::{config, widgets::window::LockWindow};
+use crate::{config, log, widgets::window::LockWindow};
 
 #[derive(Clone, glib::Downgrade, Debug, Default)]
-pub struct Lock(gtk_session_lock::Instance);
+pub struct Lock(pub gtk_session_lock::Instance);
 
 impl Lock {
     fn locked(app: &Application, parent: Option<i32>) {
-        glib::unix_signal_add_local(
+        glib::unix_signal_add_local_once(
             libc::SIGUSR1,
             glib::clone!(
-                #[strong]
+                #[weak]
                 app,
-                move || {
-                    app.quit();
-                    glib::ControlFlow::Break
-                }
+                move || app.quit()
             ),
         );
 
@@ -26,7 +23,10 @@ impl Lock {
         }
     }
 
-    fn failed(_: &gtk_session_lock::Instance) { }
+    fn failed(app: &gtk::Application) {
+        log::fatal!("failed to lock session");
+        app.quit();
+    }
 
     fn unlocked(app: &gtk::Application) {
         app.quit();
@@ -47,13 +47,10 @@ impl Lock {
             .start_hidden(config.get_start_hidden())
             .idle_timeout(config.get_idle_timeout())
             .time_format(config.get_time_format())
-            .date_format(config.get_date_format());
-
-        let w = if let Some(bg) = config.get_background() {
-            w.background(bg).build()
-        } else {
-            w.build()
-        };
+            .date_format(config.get_date_format())
+            .background(config.get_background())
+            .monitor(monitor)
+            .build();
 
         lock.assign_window_to_monitor(&w, monitor);
         // DONT call present, gtk_session_lock_instance_assign_window_to_monitor() does that for us
@@ -67,13 +64,16 @@ impl Lock {
             app,
             move |_| Self::locked(&app, parent)
         ));
-        lock.connect_failed(Self::failed);
+        lock.connect_failed(glib::clone!(
+            #[weak]
+            app,
+            move |_| Self::failed(&app)
+        ));
         lock.connect_unlocked(glib::clone!(
             #[weak]
             app,
             move |_| Self::unlocked(&app)
         ));
-
         lock.connect_monitor(glib::clone!(
             #[weak]
             app,
@@ -91,5 +91,9 @@ impl Lock {
 
     pub fn unlock(&self) {
         self.0.unlock();
+    }
+
+    pub fn is_supported() -> bool {
+        gtk_session_lock::is_supported()
     }
 }

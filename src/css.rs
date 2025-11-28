@@ -1,10 +1,7 @@
-
-/// Load CSS from a formatted string
-pub fn attach_style_fmt(fmt: std::fmt::Arguments) {
-    let css = fmt.to_string();
-
+/// Load CSS from a string
+pub fn attach_style(s: impl AsRef<str>) {
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(&css);
+    provider.load_from_string(s.as_ref());
 
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -13,6 +10,11 @@ pub fn attach_style_fmt(fmt: std::fmt::Arguments) {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+}
+
+/// Load CSS from a formatted string
+pub fn attach_style_fmt(fmt: std::fmt::Arguments<'_>) {
+    attach_style(fmt.to_string());
 }
 
 /// Load CSS from a file path

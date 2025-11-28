@@ -23,7 +23,7 @@ pub struct UserInfo {
 
 #[glib::object_subclass]
 impl ObjectSubclass for UserInfo {
-    const NAME: &'static str = "UserInfo";
+    const NAME: &str = "UserInfo";
     type Type = super::UserInfo;
     type ParentType = Box;
 }
@@ -34,6 +34,7 @@ impl ObjectImpl for UserInfo {
 
         let obj = self.obj();
 
+        obj.set_orientation(Orientation::Vertical);
         obj.set_halign(Align::Center);
 
         let vbox = Box::builder()
@@ -43,26 +44,19 @@ impl ObjectImpl for UserInfo {
             .build();
 
         let image = Image::new();
-        let label = Label::builder()
-            .css_name("user-name")
-            .build();
+        let label = Label::builder().css_classes(["user-name"]).build();
         let frame = Frame::builder()
-            .css_name("user-image")
+            .css_classes(["user-image"])
             .child(&image)
+            .halign(Align::Center)
+            .valign(Align::Center)
             .build();
         let revealer = Revealer::builder()
             .child(&vbox)
-            .reveal_child(false)
-            .transition_type(RevealerTransitionType::None)
+            .transition_type(RevealerTransitionType::Crossfade)
             .build();
 
-        let hbox = Box::builder()
-            .orientation(Orientation::Horizontal)
-            .halign(Align::Center)
-            .build();
-        hbox.append(&frame);
-
-        vbox.append(&hbox);
+        vbox.append(&frame);
         vbox.append(&label);
 
         obj.append(&revealer);

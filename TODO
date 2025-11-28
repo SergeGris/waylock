@@ -1,0 +1,4 @@
+Add support of loginctl {lock-session, terminate-session, switch-user (?)}
+Add support of ffmpeg hardware accelerated video support
+Add support for custom hello msg
+Add handling current monitor image with iterative blurring

@@ -9,6 +9,7 @@ use gtk::{
     ShortcutManager,
     Widget,
     Window,
+    gdk,
     gio,
     glib::{self, object::IsA},
 };
@@ -86,9 +87,21 @@ impl LockWindowBuilder {
         }
     }
 
-    pub fn background(self, background: &std::path::Path) -> Self {
+    pub fn background(self, background: Option<impl AsRef<std::path::Path>>) -> Self {
+        if let Some(background) = background {
+            Self {
+                builder: self
+                    .builder
+                    .property("background", background.as_ref().to_str()),
+            }
+        } else {
+            self
+        }
+    }
+
+    pub fn monitor(self, monitor: &gdk::Monitor) -> Self {
         Self {
-            builder: self.builder.property("background", background.to_str()),
+            builder: self.builder.property("monitor", monitor),
         }
     }
 }

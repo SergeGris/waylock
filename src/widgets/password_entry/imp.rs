@@ -14,7 +14,7 @@ pub struct PasswordEntry {
 
 #[glib::object_subclass]
 impl ObjectSubclass for PasswordEntry {
-    const NAME: &'static str = "PasswordEntry";
+    const NAME: &str = "PasswordEntry";
     type Type = super::PasswordEntry;
     type ParentType = gtk::Entry;
 }
