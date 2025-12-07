@@ -30,6 +30,7 @@ use clap::Parser as _;
 use gtk::{Application, Settings, gio, glib, prelude::*};
 
 mod args;
+mod blur;
 mod config;
 mod css;
 mod lock;
@@ -82,6 +83,7 @@ pub fn daemonize() -> i32 {
 
         if WIFEXITED(status) && WEXITSTATUS(status) == 0 {
             let mut set = unsafe { std::mem::zeroed() };
+
             unsafe {
                 sigemptyset(&raw mut set);
                 sigaddset(&raw mut set, SIGUSR2);
@@ -145,9 +147,11 @@ fn main() -> glib::ExitCode {
         settings.set_gtk_theme_name(args.config.get_gtk_theme().map(String::as_str));
     }
 
+    println!("{:?}", args.config);
+
     let app = Application::new(None::<&str>, gio::ApplicationFlags::FLAGS_NONE);
     let lock = Lock::new(&app, parent, &args.config);
-
+    let hld = app.hold();
     app.connect_activate(glib::clone!(
         #[weak]
         lock,
@@ -173,7 +177,7 @@ fn main() -> glib::ExitCode {
 }
 
 fn activate(app: &Application, lock: &Lock, args: &args::Args) {
-    let _hold_guard = app.hold(); // TODO
+    // let _hold_guard = app.hold(); // TODO
 
     if !Lock::is_supported() {
         log::fatal!("your compositor does not support ext-session-lock");
@@ -192,7 +196,7 @@ fn activate(app: &Application, lock: &Lock, args: &args::Args) {
     font-family: monospace;
 }}
 window:not(.hidden) .time {{
-    font-size: 36pt;
+    font-size: 40pt;
 }}
 .date {{
     transition: {duration}ms ease-in-out;
@@ -200,7 +204,7 @@ window:not(.hidden) .time {{
     font-family: monospace;
 }}
 window:not(.hidden) .date {{
-    font-size: 16pt;
+    font-size: 20pt;
 }}
 
 .error-label {{
@@ -239,5 +243,5 @@ window:not(.hidden) .date {{
 }
 
 fn shutdown(lock: &lock::Lock) {
-    lock.unlock();
+    //lock.unlock();
 }

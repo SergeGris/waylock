@@ -24,12 +24,10 @@ impl<'a> ConversationAdapter for StaticConversation<'a> {
 
     fn info_msg(&self, msg: impl AsRef<OsStr>) {
         self.info.borrow_mut()(msg.as_ref());
-        eprintln!("inf {:?}", msg.as_ref());
     }
 
     fn error_msg(&self, msg: impl AsRef<OsStr>) {
         self.error.borrow_mut()(msg.as_ref());
-        eprintln!("err {:?}", msg.as_ref());
     }
 }
 
@@ -49,8 +47,6 @@ pub fn authenticate(
         username: username.clone(),
         password,
     };
-
-    convo.info.borrow_mut()(&OsString::from("ahiosf"));
 
     let mut transaction = TransactionBuilder::new_with_service(service)
         .username(username)

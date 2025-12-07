@@ -29,6 +29,7 @@ impl Lock {
     }
 
     fn unlocked(app: &gtk::Application) {
+        // TODO std::thread::sleep(std::time::Duration::from_secs(3));
         app.quit();
     }
 

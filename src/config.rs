@@ -5,7 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::log;
+use crate::{blur::BlurMethod, log};
 
 #[derive(clap::Parser, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -35,7 +35,8 @@ pub struct Config {
     idle_timeout: Option<u64>,
 
     /// Start with hidden form
-    #[arg(long, action = clap::ArgAction::SetTrue)] //, value_parser = clap::builder::BoolishValueParser::new())]
+    #[arg(long)]
+    //, action = clap::ArgAction::SetTrue)] //, value_parser = clap::builder::BoolishValueParser::new())]
     #[serde(default)]
     start_hidden: Option<bool>,
 
@@ -48,6 +49,10 @@ pub struct Config {
     #[arg(long)]
     #[serde(default = "default::date_format")]
     date_format: Option<String>,
+    // TODO
+    // #[arg(long)]
+    // #[serde()]
+    // blur_method: Option<BlurMethod>,
 }
 
 impl Default for Config {
@@ -88,10 +93,7 @@ impl Config {
     }
 
     pub fn get_style(&self) -> Option<PathBuf> {
-        self.style
-            .as_ref()
-            .map(std::clone::Clone::clone)
-            .or_else(default::style)
+        self.style.clone().or_else(default::style)
     }
 
     pub fn get_background(&self) -> Option<&Path> {
@@ -99,10 +101,7 @@ impl Config {
     }
 
     pub fn get_config(&self) -> Option<PathBuf> {
-        self.config
-            .as_ref()
-            .map(std::clone::Clone::clone)
-            .or_else(default::config)
+        self.config.clone().or_else(default::config)
     }
 
     pub fn get_idle_timeout(&self) -> u64 {
@@ -114,17 +113,11 @@ impl Config {
     }
 
     pub fn get_time_format(&self) -> &str {
-        self.time_format
-            .as_ref()
-            .map(String::as_str)
-            .unwrap_or(default::TIME_FORMAT)
+        self.time_format.as_deref().unwrap_or(default::TIME_FORMAT)
     }
 
     pub fn get_date_format(&self) -> &str {
-        self.date_format
-            .as_ref()
-            .map(String::as_str)
-            .unwrap_or(default::DATE_FORMAT)
+        self.date_format.as_deref().unwrap_or(default::DATE_FORMAT)
     }
 }
 

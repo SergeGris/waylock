@@ -3,8 +3,6 @@ use std::cell::RefCell;
 use glib::Object;
 use gtk::{Box, Label, Orientation, ScrolledWindow, glib, prelude::*, subclass::prelude::*};
 
-use crate::css;
-
 enum MessageType {
     Info,
     Error,

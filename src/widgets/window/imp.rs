@@ -12,6 +12,7 @@ use gtk::{
     EventControllerKey,
     EventControllerScroll,
     EventControllerScrollFlags,
+    Frame,
     GestureClick,
     Image,
     Label,
@@ -21,6 +22,7 @@ use gtk::{
     Picture,
     PropagationPhase,
     Revealer,
+    RevealerTransitionType,
     Spinner,
     gdk,
     gio,
@@ -40,9 +42,82 @@ use crate::{
     widgets::{clock, powerbar},
 };
 
+#[cfg(feature = "gpu")]
+pub fn texture_to_gdk(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    size: wgpu::Extent3d,
+) -> gdk::MemoryTexture {
+    use futures::executor::block_on;
+    use gdk::MemoryTexture;
+    use glib::Bytes;
+
+    let width = size.width;
+    let height = size.height;
+
+    // Each pixel = RGBA8 (4 bytes)
+    let bytes_per_row = width * 4;
+
+    // Create CPU buffer
+    let buffer_size = (bytes_per_row * height) as wgpu::BufferAddress;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    // Copy GPU texture → CPU buffer
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        size,
+    );
+    queue.submit(Some(encoder.finish()));
+
+    // Map and read
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |p| p.unwrap());
+    device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
+
+    let data = slice.get_mapped_range();
+
+    // Make GDK texture
+    let gdk_tex = MemoryTexture::new(
+        width as i32,
+        height as i32,
+        gdk::MemoryFormat::R8g8b8a8,
+        &Bytes::from(&data[..]),
+        bytes_per_row as usize,
+    );
+
+    drop(data);
+    buffer.unmap();
+
+    gdk_tex
+}
+
 #[cfg(feature = "screenshot")]
-fn capture_monitor_screenshot(monitor: &gdk::Monitor) -> Option<Screenshot> {
-    use grim_rs::{CaptureParameters, Grim, Result};
+fn capture_monitor_screenshot(monitor: &gdk::Monitor) -> Option<blur::Image> {
+    use grim_rs::Grim;
 
     let mut grim = Grim::new().ok()?;
     let description = monitor.description()?;
@@ -56,12 +131,12 @@ fn capture_monitor_screenshot(monitor: &gdk::Monitor) -> Option<Screenshot> {
             let result = grim.capture_output(output.name()).ok()?;
             let width = result.width();
             let height = result.height();
-            let mut data = result.into_data();
+            let data = result.into_data();
 
-            return Some(Screenshot {
+            return Some(blur::Image {
                 width,
                 height,
-                data,
+                pixels: bytemuck::cast_vec(data),
             });
         }
     }
@@ -69,14 +144,14 @@ fn capture_monitor_screenshot(monitor: &gdk::Monitor) -> Option<Screenshot> {
     None
 }
 
-#[cfg(feature = "screenshot")]
-#[derive(Default, Debug, Clone)]
-struct Screenshot {
-    // iter: usize,
-    width: u32,
-    height: u32,
-    data: Vec<u8>,
-}
+// #[cfg(feature = "screenshot")]
+// #[derive(Default, Debug, Clone)]
+// struct Screenshot {
+//     // iter: usize,
+//     width: u32,
+//     height: u32,
+//     data: Vec<u8>,
+// }
 
 #[derive(Debug, Default, glib::Properties)]
 #[properties(wrapper_type = super::LockWindow)]
@@ -101,7 +176,10 @@ pub struct LockWindow {
     pub feed: RefCell<messages::MessageWindow>,
 
     #[cfg(feature = "screenshot")]
-    pub screenshot: RefCell<Screenshot>,
+    screenshot: RefCell<blur::Image>,
+
+    pub overlay: RefCell<Overlay>,
+    pub screenshot_blur: RefCell<Picture>,
 
     /// Lock instance
     #[property(get, set, construct_only)]
@@ -177,7 +255,7 @@ impl ObjectImpl for LockWindow {
         let body_revealer = Revealer::builder().child(&body).build();
         let error_revealer = Revealer::builder()
             .css_classes(["error-label"])
-            .child(&error_label)
+            .child(&error_label) //TODO ALIGN CENTER error text
             .build();
 
         submit_row.append(&error_revealer);
@@ -200,6 +278,10 @@ impl ObjectImpl for LockWindow {
             .orientation(Orientation::Horizontal)
             .halign(Align::Center)
             .spacing(4)
+            .margin_top(4)
+            .margin_start(4)
+            .margin_end(4)
+            .margin_bottom(4)
             .build();
 
         layout.append(&Image::from_icon_name(
@@ -214,7 +296,14 @@ impl ObjectImpl for LockWindow {
         }
 
         top_bar.append(&Label::builder().hexpand(true).build());
-        top_bar.append(&layout);
+
+        let layout_frame = Frame::builder()
+            .child(&layout)
+            .css_classes(["bubble-frame"])
+            .build();
+
+        css::attach_style(".bubble-frame { background-color: #0F0F0F; }");
+        top_bar.append(&layout_frame);
 
         let caps_lock_revealer = Revealer::builder()
             .child(&Label::new(Some("Caps Lock is on")))
@@ -314,47 +403,6 @@ impl ObjectImpl for LockWindow {
             .margin_bottom(8)
             .build();
 
-        ////
-        // // Try to enumerate monitors via xcap
-        //     let monitors = match xcap::Monitor::all() {
-        //         Ok(m) => m,
-        //         Err(err) => {
-        //             eprintln!("Failed to query monitors via xcap: {:?}", err);
-        //             return;
-        //         }
-        //     };
-
-        // // Try to pick a monitor — e.g. first one
-        // let monitor = match monitors.into_iter().next() {
-        //     Some(m) => m,
-        //     None => {
-        //         eprintln!("No monitor found");
-        //         return;
-        //     }
-        // };
-
-        // // Capture image of that monitor
-        // let image = match monitor.capture_image() {
-        //     Ok(img) => img,
-        //     Err(err) => {
-        //         eprintln!("Failed to capture image: {:?}", err);
-        //         return;
-        //     }
-        // };
-
-        // let width = image.width() as i32;
-        // let height = image.height() as i32;
-
-        // println!("Captured monitor: {}x{}", width, height);
-
-        // // xcap's image format is RGBA8888 (premultiplied or not?) — passes raw pixel buffer
-        // // Convert its raw buffer into gdk::Texture (which is a Paintable)
-        // let bytes = image.into_raw();  // returns Vec<u8> in RGBA order
-        // let tex = gdk::Texture::from_bytes(
-        //     &glib::Bytes::from_owned(bytes),
-        // );
-        //     ////
-
         let background = Picture::builder()
             .css_name("background")
             .content_fit(ContentFit::Cover)
@@ -366,17 +414,24 @@ impl ObjectImpl for LockWindow {
         let background_is_screenshot = self.handle_background(&background);
 
         let overlay = Overlay::new();
-        overlay.set_child(Some(&main_box));
+        #[cfg(feature = "screenshot")]
+        overlay.add_overlay(&screenshot_blur);
+        overlay.add_overlay(&main_box);
         overlay.add_overlay(&powerbar_revealer);
         overlay.add_overlay(&top_bar);
 
-        let background_overlay = Overlay::new();
-        background_overlay.add_overlay(&background);
-        #[cfg(feature = "screenshot")]
-        background_overlay.add_overlay(&screenshot_blur);
-        background_overlay.add_overlay(&overlay);
+        let overlay_revealer = Revealer::builder()
+            .transition_type(RevealerTransitionType::Crossfade)
+            .transition_duration(1000)
+            .child(&overlay)
+            .reveal_child(false)
+            .build();
 
-        window.set_child(Some(&background_overlay));
+        let main_overlay = Overlay::new();
+        main_overlay.add_overlay(&background);
+        main_overlay.add_overlay(&overlay_revealer);
+
+        window.set_child(Some(&main_overlay));
 
         *self.body_revealer.borrow_mut() = body_revealer;
         *self.error_revealer.borrow_mut() = error_revealer;
@@ -409,70 +464,16 @@ impl ObjectImpl for LockWindow {
 
         #[cfg(feature = "screenshot")]
         if background_is_screenshot {
-            use libblur::*;
-
-            let mut sh = window.imp().screenshot.borrow_mut();
-
-            let width = sh.width;
-            let height = sh.height;
-            let rowstride = (width * 4) as usize; // rowstride: bytes per row (width * 4 bytes for RGBA)
-            // TODO...
-            let mut data: &'static mut _ = unsafe { std::mem::transmute(sh.data.as_mut_slice()) };
-
-            let mut blur = BlurImageMut::borrow(data, width, height, FastBlurChannels::Channels4);
-
-            //stack_blur(&mut blur, AnisotropicRadius::new(32), ThreadingPolicy::Adaptive);
-            //libblur::fast_gaussian(&mut blur, AnisotropicRadius::new(8), ThreadingPolicy::Adaptive, EdgeMode2D::new(EdgeMode::Clamp));
-
-            for i in 0..3 {
-                libblur::fast_gaussian_next(
-                    &mut blur,
-                    AnisotropicRadius::new(24),
-                    ThreadingPolicy::Adaptive,
-                    EdgeMode2D::new(EdgeMode::Reflect),
-                );
-            }
-
-            screenshot_blur.set_paintable(Some(&gdk::MemoryTexture::new(
-                width as i32,
-                height as i32,
-                gdk::MemoryFormat::R8g8b8a8,
-                &glib::Bytes::from_owned(data),
-                (width * 4) as usize, // rowstride: bytes per row (width * 4 bytes for RGBA)
-            )));
+            let texture = crate::blur::do_blur(
+                &mut self.screenshot.borrow_mut(),
+                crate::blur::BlurMethod::GPU,
+            );
+            screenshot_blur.set_paintable(Some(&texture));
+            overlay_revealer.connect_child_revealed_notify(move |_| main_overlay.remove_overlay(&background));
         }
 
-        // TODO overlay.set_reveal_child(true);???
-        overlay.set_opacity(0.0);
-        screenshot_blur.set_opacity(0.0);
-
-        let fade_speed = 0.02;
-        let mut o = 0.0;
-        glib::timeout_add_local(
-            std::time::Duration::from_millis(16),
-            glib::clone!(
-                #[weak]
-                overlay,
-                #[weak]
-                screenshot_blur,
-                #[upgrade_or]
-                ControlFlow::Continue,
-                move || {
-                    o += fade_speed;
-
-                    if o >= 1.0 {
-                        overlay.set_opacity(1.0);
-                        screenshot_blur.set_opacity(1.0);
-                        background_overlay.remove_overlay(&background);
-                        ControlFlow::Break
-                    } else {
-                        overlay.set_opacity(o);
-                        screenshot_blur.set_opacity(o);
-                        ControlFlow::Continue
-                    }
-                }
-            ),
-        );
+        // TODO: IDK why we need idle_add_local_once()...
+        glib::idle_add_local_once(move || overlay_revealer.set_reveal_child(true));
     }
 }
 
@@ -551,6 +552,11 @@ impl LockWindow {
                 | Key::KP_Left
                 | Key::KP_Right
                 | Key::KP_Down
+                | Key::Caps_Lock
+                | Key::ISO_Next_Group
+                | Key::ISO_Next_Group_Lock
+                | Key::Num_Lock
+                | Key::Scroll_Lock
         ) {
             return Propagation::Proceed;
         }
@@ -640,7 +646,7 @@ impl LockWindow {
                         ConversationMessage::ErrorMessage(message) => {
                             let msg = "error: ".to_string()
                                 + &message.into_string().ok().unwrap_or("".into());
-                            log::info!("{msg:?}");
+                            log::warning!("{msg:?}");
                             window.feed.borrow().add_message(&msg);
                         }
                     }
@@ -854,19 +860,19 @@ impl LockWindow {
             if path == "screenshot" {
                 #[cfg(feature = "screenshot")]
                 if let Some(monitor) = self.monitor.borrow().as_ref() {
-                    if let Some(sh) = capture_monitor_screenshot(monitor) {
-                        let width = sh.width;
-                        let height = sh.height;
+                    if let Some(screenshot) = capture_monitor_screenshot(monitor) {
+                        let width = screenshot.width;
+                        let height = screenshot.height;
 
                         background.set_paintable(Some(&gdk::MemoryTexture::new(
                             width as i32,
                             height as i32,
                             gdk::MemoryFormat::R8g8b8a8,
-                            &glib::Bytes::from_owned(sh.data.clone()),
+                            &glib::Bytes::from_owned(bytemuck::cast_vec(screenshot.pixels.clone())),
                             (width * 4) as usize, // rowstride: bytes per row (width * 4 bytes for RGBA)
                         )));
 
-                        *self.screenshot.borrow_mut() = sh;
+                        *self.screenshot.borrow_mut() = screenshot;
                         return true;
                     }
 
@@ -902,6 +908,6 @@ impl LockWindow {
             background.set_filename(Some(&path));
         }
 
-        return false;
+        false
     }
 }
